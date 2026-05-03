@@ -1,176 +1,202 @@
 import streamlit as st
-import os
 import pandas as pd
-import plotly.express as px
-from dotenv import load_dotenv
-from openai import OpenAI
 
-from database import *
+# DATABASE
+from database import (
+    criar_tabela,
+    criar_tabela_resultados,
+    salvar_resultado,
+    historico
+)
 
-# =====================
-# CONFIG
-# =====================
-st.set_page_config(layout="wide")
-load_dotenv()
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+# AUTH
+from auth import registrar, login
 
-criar_tabelas()
+# IA
+from ia import explicar_erro, gerar_plano
 
-# =====================
-# SESSION
-# =====================
-if "page" not in st.session_state:
-    st.session_state.page = "login"
+# SIMULADOR
+from simulador import gerar_simulado
 
-if "user" not in st.session_state:
-    st.session_state.user = None
+# ANALYTICS
+from analytics import calcular_desempenho, sugerir_materia
 
-if "tipo" not in st.session_state:
-    st.session_state.tipo = None
 
-# =====================
+# =========================
+# INIT
+# =========================
+criar_tabela()
+criar_tabela_resultados()
+
+st.set_page_config(page_title="ZEO", layout="centered")
+
+# =========================
+# SESSION STATE
+# =========================
+if "logado" not in st.session_state:
+    st.session_state.logado = False
+
+if "pagina" not in st.session_state:
+    st.session_state.pagina = "login"
+
+
+# =========================
 # LOGIN / CADASTRO
-# =====================
-if st.session_state.page == "login":
+# =========================
+if not st.session_state.logado:
 
     st.title("🔐 ZEO Login")
 
-    tipo = st.selectbox("Tipo", ["aluno","professor"])
-    u = st.text_input("Usuário")
-    s = st.text_input("Senha", type="password")
+    aba = st.radio("Escolha", ["Login", "Criar conta"])
 
-    if st.button("Entrar"):
-        if login(u,s):
-            st.session_state.user = u
-            st.session_state.tipo = tipo
-            st.session_state.page = "menu"
-            st.rerun()
-        else:
-            st.error("Login inválido")
+    if aba == "Login":
+        usuario = st.text_input("Usuário")
+        senha = st.text_input("Senha", type="password")
+
+        if st.button("Entrar"):
+            if login(usuario, senha):
+                st.session_state.logado = True
+                st.session_state.usuario = usuario
+                st.session_state.pagina = "menu"
+                st.rerun()
+            else:
+                st.error("Usuário ou senha inválidos")
+
+    else:
+        novo_user = st.text_input("Novo usuário")
+        nova_senha = st.text_input("Nova senha", type="password")
+
+        if st.button("Registrar"):
+            if registrar(novo_user, nova_senha):
+                st.success("Conta criada!")
+            else:
+                st.error("Usuário já existe")
+
+
+# =========================
+# MENU PRINCIPAL
+# =========================
+else:
+
+    st.title("🎓 ZEO Plataforma")
+
+    st.success(f"Bem-vindo, {st.session_state.usuario}")
+
+    if st.button("🚪 Sair"):
+        st.session_state.logado = False
+        st.session_state.pagina = "login"
+        st.rerun()
 
     st.divider()
 
-    st.subheader("Criar conta")
+    col1, col2 = st.columns(2)
 
-    nu = st.text_input("Novo usuário")
-    ns = st.text_input("Nova senha", type="password")
+    if col1.button("🧪 Fazer Simulado"):
+        st.session_state.pagina = "simulado"
 
-    if st.button("Cadastrar"):
-        if criar_usuario(nu,ns,tipo):
-            st.success("Conta criada")
-        else:
-            st.error("Usuário já existe")
+    if col2.button("📊 Ver Desempenho"):
+        st.session_state.pagina = "dashboard"
 
-# =====================
-# MENU
-# =====================
-elif st.session_state.page == "menu":
 
-    st.title(f"🧠 ZEO | {st.session_state.user}")
+# =========================
+# SIMULADO
+# =========================
+if st.session_state.logado and st.session_state.pagina == "simulado":
 
-    if st.session_state.tipo == "aluno":
+    st.title("🧪 Simulado")
 
-        col1, col2, col3 = st.columns(3)
+    materia = st.selectbox("Escolha a matéria", ["Matemática", "Português"])
 
-        if col1.button("📘 Simulado"):
-            st.session_state.page = "simulado"
+    if st.button("Gerar Simulado"):
+        st.session_state.questoes = gerar_simulado(materia)
+        st.session_state.respostas = {}
+        st.session_state.materia = materia
 
-        if col2.button("🤖 Tutor IA"):
-            st.session_state.page = "ia"
+    if "questoes" in st.session_state:
 
-        if col3.button("🏆 Ranking"):
-            st.session_state.page = "ranking"
+        for i, q in enumerate(st.session_state.questoes):
+            st.subheader(f"Questão {i+1}")
+            st.write(q["pergunta"])
 
+            resposta = st.radio(
+                "Escolha:",
+                q["alternativas"],
+                key=f"q_{i}"
+            )
+
+            st.session_state.respostas[i] = resposta
+
+        if st.button("Finalizar Simulado"):
+            acertos = 0
+
+            for i, q in enumerate(st.session_state.questoes):
+
+                resposta = st.session_state.respostas[i]
+
+                correta_flag = 1 if resposta == q["correta"] else 0
+
+                salvar_resultado(
+                    st.session_state.usuario,
+                    st.session_state.materia,
+                    correta_flag
+                )
+
+                if correta_flag:
+                    acertos += 1
+                else:
+                    st.error(f"❌ Erro na questão {i+1}")
+
+                    explicacao = explicar_erro(
+                        q["pergunta"],
+                        resposta,
+                        q["correta"]
+                    )
+
+                    st.info(explicacao)
+
+            st.success(f"🎯 Resultado: {acertos}/{len(st.session_state.questoes)}")
+
+            if st.button("Voltar ao menu"):
+                st.session_state.pagina = "menu"
+                st.rerun()
+
+
+# =========================
+# DASHBOARD
+# =========================
+if st.session_state.logado and st.session_state.pagina == "dashboard":
+
+    st.title("📊 Seu Desempenho")
+
+    dados = historico(st.session_state.usuario)
+
+    if not dados:
+        st.warning("Você ainda não fez simulados.")
     else:
-        if st.button("📊 Dashboard"):
-            st.session_state.page = "dashboard"
+        resumo = calcular_desempenho(dados)
 
-    if st.button("🚪 Sair"):
-        st.session_state.user = None
-        st.session_state.page = "login"
+        tabela = []
+        for materia, d in resumo.items():
+            tabela.append({
+                "Matéria": materia,
+                "Acertos (%)": int(d["taxa"] * 100)
+            })
 
-# =====================
-# SIMULADO IA
-# =====================
-elif st.session_state.page == "simulado":
+        df = pd.DataFrame(tabela)
 
-    st.title("📘 Simulado Inteligente")
+        st.dataframe(df)
 
-    materia = st.selectbox("Matéria", ["Matemática","Português","História"])
+        st.bar_chart(df.set_index("Matéria"))
 
-    if st.button("Gerar prova com IA"):
+        pior = sugerir_materia(resumo)
 
-        prompt = f"""
-        Gere 3 questões de {materia} estilo ENEM com 4 alternativas e gabarito.
-        """
+        if pior:
+            st.warning(f"⚠️ Foque mais em: {pior}")
 
-        r = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role":"user","content":prompt}]
-        )
+        if st.button("🤖 Gerar plano de estudo com IA"):
+            plano = gerar_plano(resumo)
+            st.info(plano)
 
-        st.session_state.prova = r.choices[0].message.content
-
-    if "prova" in st.session_state:
-        st.write(st.session_state.prova)
-
-    nota = st.slider("Nota simulada", 0,100)
-
-    if st.button("Salvar resultado"):
-        salvar_resultado(st.session_state.user, materia, nota)
-        st.success("Salvo!")
-
-    if st.button("Voltar"):
-        st.session_state.page = "menu"
-
-# =====================
-# IA TUTOR
-# =====================
-elif st.session_state.page == "ia":
-
-    st.title("🤖 Tutor IA")
-
-    pergunta = st.text_input("Pergunta")
-
-    if st.button("Perguntar"):
-        r = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role":"user","content":pergunta}]
-        )
-        st.write(r.choices[0].message.content)
-
-    if st.button("Voltar"):
-        st.session_state.page = "menu"
-
-# =====================
-# RANKING
-# =====================
-elif st.session_state.page == "ranking":
-
-    st.title("🏆 Ranking")
-
-    data = ranking()
-    df = pd.DataFrame(data, columns=["Aluno","Média"])
-
-    st.dataframe(df)
-
-    if st.button("Voltar"):
-        st.session_state.page = "menu"
-
-# =====================
-# DASHBOARD PROFESSOR
-# =====================
-elif st.session_state.page == "dashboard":
-
-    st.title("📊 Dashboard Escolar")
-
-    data = historico()
-    df = pd.DataFrame(data, columns=["id","Aluno","Matéria","Nota"])
-
-    st.dataframe(df)
-
-    fig = px.bar(df, x="Aluno", y="Nota", color="Matéria")
-    st.plotly_chart(fig)
-
-    if st.button("Voltar"):
-        st.session_state.page = "menu"
+    if st.button("⬅️ Voltar"):
+        st.session_state.pagina = "menu"
+        st.rerun()
