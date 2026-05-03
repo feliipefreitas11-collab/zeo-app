@@ -1,15 +1,13 @@
-def gerar_plano(resumo):
-    prompt = f"""
-    Um aluno tem o seguinte desempenho:
+import os
+from openai import OpenAI
 
-    {resumo}
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-    Gere um plano de estudo simples e direto para melhorar.
-    """
-
-    response = client.chat.completions.create(
+def perguntar(pergunta):
+    resposta = client.chat.completions.create(
         model="gpt-4o-mini",
-        messages=[{"role": "user", "content": prompt}]
+        messages=[
+            {"role": "user", "content": pergunta}
+        ]
     )
-
-    return response.choices[0].message.content
+    return resposta.choices[0].message.content
