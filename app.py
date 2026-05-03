@@ -1,44 +1,31 @@
 import streamlit as st
 import pandas as pd
+import plotly.express as px
+from openai import OpenAI
 
-# DATABASE
-from database import (
-    criar_tabela,
-    criar_tabela_resultados,
-    salvar_resultado,
-    historico
-)
-
-# AUTH
-from auth import registrar, login
-
-# IA
-from ia import explicar_erro, gerar_plano
-
-# SIMULADOR
-from simulador import gerar_simulado
-
-# ANALYTICS
-from analytics import calcular_desempenho, sugerir_materia
-
+# módulos internos
+from database import criar_tabela
+from auth import login, registrar
+from simulador import gerar_questao
+from ia import perguntar
 
 # =========================
-# INIT
+# CONFIG
 # =========================
+st.set_page_config(layout="wide")
 criar_tabela()
-criar_tabela_resultados()
 
-st.set_page_config(page_title="ZEO", layout="centered")
+# API KEY (Streamlit Secrets)
+client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
 # =========================
-# SESSION STATE
+# SESSION
 # =========================
 if "logado" not in st.session_state:
     st.session_state.logado = False
 
 if "pagina" not in st.session_state:
     st.session_state.pagina = "login"
-
 
 # =========================
 # LOGIN / CADASTRO
@@ -47,7 +34,7 @@ if not st.session_state.logado:
 
     st.title("🔐 ZEO Login")
 
-    aba = st.radio("Escolha", ["Login", "Criar conta"])
+    aba = st.selectbox("Escolha", ["Login", "Criar conta"])
 
     if aba == "Login":
         usuario = st.text_input("Usuário")
@@ -72,131 +59,72 @@ if not st.session_state.logado:
             else:
                 st.error("Usuário já existe")
 
-
 # =========================
 # MENU PRINCIPAL
 # =========================
 else:
 
-    st.title("🎓 ZEO Plataforma")
+    st.sidebar.title(f"👋 {st.session_state.usuario}")
+    menu = st.sidebar.radio(
+        "Menu",
+        ["Simulado", "Dashboard", "IA Tutor", "Sair"]
+    )
 
-    st.success(f"Bem-vindo, {st.session_state.usuario}")
+    # =========================
+    # SIMULADO
+    # =========================
+    if menu == "Simulado":
 
-    if st.button("🚪 Sair"):
-        st.session_state.logado = False
-        st.session_state.pagina = "login"
-        st.rerun()
+        st.title("📝 Simulado")
 
-    st.divider()
+        questao = gerar_questao()
 
-    col1, col2 = st.columns(2)
+        st.write(questao["pergunta"])
+        resposta = st.radio("Escolha:", questao["alternativas"])
 
-    if col1.button("🧪 Fazer Simulado"):
-        st.session_state.pagina = "simulado"
+        if st.button("Responder"):
+            if resposta == questao["correta"]:
+                st.success("✅ Correto!")
+            else:
+                st.error(f"❌ Errado! Resposta correta: {questao['correta']}")
 
-    if col2.button("📊 Ver Desempenho"):
-        st.session_state.pagina = "dashboard"
+    # =========================
+    # DASHBOARD
+    # =========================
+    elif menu == "Dashboard":
 
+        st.title("📊 Dashboard Escolar")
 
-# =========================
-# SIMULADO
-# =========================
-if st.session_state.logado and st.session_state.pagina == "simulado":
+        dados = {
+            "Aluno": ["João", "Maria", "Pedro"],
+            "Nota": [700, 850, 600],
+            "Matéria": ["Matemática", "Português", "História"]
+        }
 
-    st.title("🧪 Simulado")
-
-    materia = st.selectbox("Escolha a matéria", ["Matemática", "Português"])
-
-    if st.button("Gerar Simulado"):
-        st.session_state.questoes = gerar_simulado(materia)
-        st.session_state.respostas = {}
-        st.session_state.materia = materia
-
-    if "questoes" in st.session_state:
-
-        for i, q in enumerate(st.session_state.questoes):
-            st.subheader(f"Questão {i+1}")
-            st.write(q["pergunta"])
-
-            resposta = st.radio(
-                "Escolha:",
-                q["alternativas"],
-                key=f"q_{i}"
-            )
-
-            st.session_state.respostas[i] = resposta
-
-        if st.button("Finalizar Simulado"):
-            acertos = 0
-
-            for i, q in enumerate(st.session_state.questoes):
-
-                resposta = st.session_state.respostas[i]
-
-                correta_flag = 1 if resposta == q["correta"] else 0
-
-                salvar_resultado(
-                    st.session_state.usuario,
-                    st.session_state.materia,
-                    correta_flag
-                )
-
-                if correta_flag:
-                    acertos += 1
-                else:
-                    st.error(f"❌ Erro na questão {i+1}")
-
-                    explicacao = explicar_erro(
-                        q["pergunta"],
-                        resposta,
-                        q["correta"]
-                    )
-
-                    st.info(explicacao)
-
-            st.success(f"🎯 Resultado: {acertos}/{len(st.session_state.questoes)}")
-
-            if st.button("Voltar ao menu"):
-                st.session_state.pagina = "menu"
-                st.rerun()
-
-
-# =========================
-# DASHBOARD
-# =========================
-if st.session_state.logado and st.session_state.pagina == "dashboard":
-
-    st.title("📊 Seu Desempenho")
-
-    dados = historico(st.session_state.usuario)
-
-    if not dados:
-        st.warning("Você ainda não fez simulados.")
-    else:
-        resumo = calcular_desempenho(dados)
-
-        tabela = []
-        for materia, d in resumo.items():
-            tabela.append({
-                "Matéria": materia,
-                "Acertos (%)": int(d["taxa"] * 100)
-            })
-
-        df = pd.DataFrame(tabela)
-
+        df = pd.DataFrame(dados)
         st.dataframe(df)
 
-        st.bar_chart(df.set_index("Matéria"))
+        fig = px.bar(df, x="Aluno", y="Nota", color="Matéria")
+        st.plotly_chart(fig)
 
-        pior = sugerir_materia(resumo)
+    # =========================
+    # IA TUTOR
+    # =========================
+    elif menu == "IA Tutor":
 
-        if pior:
-            st.warning(f"⚠️ Foque mais em: {pior}")
+        st.title("🤖 Tutor com IA")
 
-        if st.button("🤖 Gerar plano de estudo com IA"):
-            plano = gerar_plano(resumo)
-            st.info(plano)
+        pergunta_user = st.text_area("Faça sua pergunta")
 
-    if st.button("⬅️ Voltar"):
-        st.session_state.pagina = "menu"
+        if st.button("Perguntar"):
+            if pergunta_user:
+                resposta = perguntar(pergunta_user)
+                st.success(resposta)
+
+    # =========================
+    # SAIR
+    # =========================
+    elif menu == "Sair":
+        st.session_state.logado = False
+        st.session_state.pagina = "login"
         st.rerun()
